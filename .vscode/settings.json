@@ -1,0 +1,6 @@
+{
+  "python.defaultInterpreterPath": "/home/mwuerstle@corp.exxcellent.de/miniconda3/envs/mujoco/bin/python",
+  "python.analysis.stubPath": "typings",
+  "python-envs.defaultEnvManager": "ms-python.python:conda",
+  "python-envs.defaultPackageManager": "ms-python.python:conda"
+}

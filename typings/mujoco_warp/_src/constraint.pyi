@@ -1,0 +1,66 @@
+from __future__ import annotations
+from mujoco_warp._src import math
+from mujoco_warp._src import support
+from mujoco_warp._src import types
+from mujoco_warp._src.types import ConstraintType
+from mujoco_warp._src.types import ContactType
+from mujoco_warp._src.types import DisableBit
+from mujoco_warp._src.types import vec11f as vec11
+from mujoco_warp._src.types import vec5f as vec5
+from mujoco_warp._src.types import vec6f as vec6
+from mujoco_warp._src.warp_util import cache_kernel
+from mujoco_warp._src.warp_util import event_scope
+import warp as wp
+import warp._src.context
+__all__: list[str] = ['ConstraintType', 'ContactType', 'DisableBit', 'cache_kernel', 'event_scope', 'make_constraint', 'math', 'support', 'types', 'vec11', 'vec5', 'vec6', 'wp']
+def _add_surface_vel(*args):
+    ...
+def _efc_contact_init(*args):
+    ...
+def _efc_contact_init_flex(*args):
+    ...
+def _efc_contact_jac_dense(*args):
+    ...
+def _efc_contact_jac_dense_flex(*args):
+    ...
+def _efc_contact_jac_sparse(*args):
+    ...
+def _efc_contact_jac_sparse_flex(*args):
+    ...
+def _efc_contact_update(*args):
+    ...
+def _efc_contact_update_flex(*args):
+    ...
+def _equality_connect(*args):
+    ...
+def _equality_flex(*args):
+    ...
+def _equality_flexstrain(*args):
+    ...
+def _equality_joint(*args):
+    ...
+def _equality_tendon(*args):
+    ...
+def _equality_weld(*args):
+    ...
+def _friction_dof(*args):
+    ...
+def _friction_tendon(*args):
+    ...
+def _limit_ball(*args):
+    ...
+def _limit_slide_hinge(*args):
+    ...
+def _limit_tendon(*args):
+    ...
+def make_constraint(*args, **kwargs):
+    """
+    Creates constraint jacobians and other supporting data.
+    """
+_add_weight: warp._src.context.Function
+_contact_kbimp: warp._src.context.Function
+_efc_D: warp._src.context.Function
+_efc_row: warp._src.context.Function
+_geom_surface_velocity: warp._src.context.Function
+_get_contact_bodies_and_weights: warp._src.context.Function
+_zero_constraint_counts: warp._src.context.Kernel

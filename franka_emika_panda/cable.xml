@@ -1,0 +1,16 @@
+<mujoco>
+  <extension>
+    <plugin plugin="mujoco.elasticity.cable"/>
+  </extension>
+  <worldbody>
+    <composite type="cable" prefix="c_" curve="s" count="31 1 1" size="2.0" offset="0.4 0.0 0.0" initial="free">
+      <plugin plugin="mujoco.elasticity.cable">
+        <config key="twist" value="1e6"/>
+        <config key="bend" value="1e6"/>
+        <config key="vmax" value="0.05"/>
+      </plugin>
+      <joint kind="main" damping="0.001"/>
+      <geom type="capsule" contype="1" size="0.01" rgba=".8 .2 .1 1" condim="1"/>
+    </composite>
+  </worldbody>
+</mujoco>
