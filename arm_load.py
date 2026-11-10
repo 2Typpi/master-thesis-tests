@@ -257,7 +257,7 @@ def main():
     spec.attach(rope_spec, frame=mount, prefix="")
     mjm = spec.compile()
 
-    if not cuda_available:
+    if cuda_available:
         print("CUDA detected! Running with MuJoCo Warp (Headless/GPU mode)...")
         import mujoco_warp as mjw
 
@@ -315,7 +315,7 @@ def main():
         ]
         grasped = False
         # Run standard MuJoCo with GUI viewer
-        with mujoco.viewer.launch_passive(mjm, d, show_right_ui=False) as viewer:
+        with mujoco.viewer.launch_passive(mjm, d, show_right_ui=True) as viewer:
             while viewer.is_running():
                 step_start = time.time()
                 
