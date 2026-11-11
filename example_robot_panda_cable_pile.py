@@ -19,12 +19,16 @@ Run headless:
     python example_robot_panda_cable_pile.py --viewer null --num-frames 900 --pull knot
 """
 
+import math
 import numpy as np
 import warp as wp
+
+from PIL import Image
 
 import newton
 import newton.examples
 import newton.ik as ik
+from newton.sensors import SensorTiledCamera
 
 # ---------------------------------------------------------------- constants
 HOME_Q = [0.0, -0.4, 0.0, -2.2, 0.0, 1.8, 0.785, 0.04, 0.04]
@@ -229,7 +233,7 @@ def _zero_mass(builder: newton.ModelBuilder, body: int) -> None:
     builder.body_inv_inertia[body] = wp.mat33(0.0)
 
 
-class Example:
+class Panda:
     """Panda + cable pile. Scene build / reset / physics are separate from the controller."""
 
     def __init__(self, viewer, args=None):
@@ -399,7 +403,51 @@ class Example:
         builder.add_ground_plane()
         builder.color()
 
+        cable_body_ids = {
+            int(body)
+            for cable in self.cables
+            for body in cable["bodies"]
+        }
+        for shape_id, body_id in enumerate(builder.shape_body):
+            if int(body_id) not in cable_body_ids:
+                builder.shape_flags[shape_id] &= ~int(newton.ShapeFlags.VISIBLE)
+
         self.cable_model = builder.finalize()
+
+        self.rgbd_saved = False
+        self.rgbd_width = 1280
+        self.rgbd_height = 960
+        self.rgbd_sensor = SensorTiledCamera(model=self.cable_model)
+
+
+        # The sensor has its own render colors; set them from the cable palette.
+        sensor_colors = np.ones((self.cable_model.shape_count, 4), dtype=np.float32)
+        shape_bodies = self.cable_model.shape_body.numpy()
+
+        for cable in self.cables:
+            cable_bodies = {int(body) for body in cable["bodies"]}
+            rgb = np.asarray(cable["colour"], dtype=np.float32)
+
+            for shape_id, body_id in enumerate(shape_bodies):
+                if int(body_id) in cable_bodies:
+                    sensor_colors[shape_id, :3] = rgb
+
+        self.rgbd_sensor.render_context.shape_colors = wp.array(
+            sensor_colors,
+            dtype=wp.vec4f,
+            device=self.device,
+        )
+        
+        self.rgbd_rays = self.rgbd_sensor.compute_pinhole_camera_rays(self.rgbd_width, self.rgbd_height, math.radians(55.0))
+        self.rgbd_colors = self.rgbd_sensor.create_color_image_output(self.rgbd_width, self.rgbd_height)
+        self.rgbd_depth = self.rgbd_sensor.create_depth_image_output(self.rgbd_width, self.rgbd_height)
+
+        self.rgbd_camera_transforms = wp.array(
+            [[wp.transformf(wp.vec3f(0.0, 0.0, 0.8), wp.quatf(0.0, 0.0, 0.0, 1.0))]],
+            dtype=wp.transformf,
+            device=self.device,
+        )
+
         self.cable_solver = newton.solvers.SolverVBD(
             self.cable_model, iterations=SIM_ITERATIONS, friction_epsilon=FRICTION_EPS
         )
@@ -687,10 +735,51 @@ class Example:
         else:
             self.apply_command(*self.controller_command())
         self.advance_physics()
+        if self.settled_at is not None and not self.rgbd_saved:
+            self.save_settled_rgbd()
         self.sim_time += FRAME_DT
         self.frame += 1
         self.phase_time += FRAME_DT
         self._advance_phase()
+
+    # ------------------------------------------------------------ images
+    def save_settled_rgbd(self):
+        self.rgbd_sensor.update(
+            self.cable_state_0,
+            self.rgbd_camera_transforms,
+            self.rgbd_rays,
+            color_image=self.rgbd_colors,
+            depth_image=self.rgbd_depth,
+        )
+
+        packed = self.rgbd_colors.numpy()[0, 0]
+        rgb = np.stack(
+            (
+                packed & 0xFF,
+                (packed >> 8) & 0xFF,
+                (packed >> 16) & 0xFF,
+            ),
+            axis=-1,
+        ).astype(np.uint8)
+        Image.fromarray(rgb).save("settled_color.png")
+
+        # Save a viewable grayscale depth image. Closer points appear brighter;
+        # pixels with no hit are black. Depth values are ray distances in metres.
+        depth = self.rgbd_depth.numpy()[0, 0]
+        valid = np.isfinite(depth) & (depth > 0.0)
+
+        depth_gray = np.zeros(depth.shape, dtype=np.uint8)
+        if valid.any():
+            near, far = np.percentile(depth[valid], [3, 97])
+            if far <= near:
+                far = near + 1e-6
+
+            scaled = np.clip((depth[valid] - near) / (far - near), 0.0, 1.0)
+            depth_gray[valid] = (255 * (1.0 - scaled)).astype(np.uint8)
+
+        Image.fromarray(depth_gray).save("settled_depth.png")
+        np.save("settled_depth.npy", depth.astype(np.float32))
+        self.rgbd_saved = True
 
     # ------------------------------------------------------------ metrics
     def cable_metrics(self, cable) -> dict:
@@ -758,5 +847,5 @@ if __name__ == "__main__":
     parser.add_argument("--unlink-control", action="store_true", help="control run: B and C are not hooked into A")
     parser.add_argument("--filter-mirrors", action="store_true", help="control run: hand cannot touch cables")
     viewer, args = newton.examples.init(parser)
-    example = Example(viewer, args)
+    example = Panda(viewer, args)
     newton.examples.run(example, args)
