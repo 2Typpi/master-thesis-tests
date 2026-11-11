@@ -59,6 +59,17 @@ class Panda(SceneMixin, ControllerMixin, RGBDCameraMixin):
                 wp.launch(_drive_attached, dim=1, inputs=[self.state.body_q, self.hand_body, local, self.cable_state_0.body_q, self.cable_state_0.body_qd, seg_body])
             self.cable_state_0.clear_forces()
             self.cable_model.collide(self.cable_state_0, self.cable_contacts)
+            if self.PHASES[self.phase_idx][0] in ('close', 'pull'):
+                body0, body1, _, _, force_on_body1, count = self.cable_solver.collect_rigid_contact_forces(
+                    self.cable_state_0, self.cable_contacts, SIM_DT
+                )
+                self.update_grip_force(
+                    body0.numpy(),
+                    body1.numpy(),
+                    force_on_body1.numpy(),
+                    self.cable_contacts.rigid_contact_normal.numpy(),
+                    int(count.numpy()[0]),
+                )
             self.cable_solver.step(self.cable_state_0, self.cable_state_1, self.cable_control, self.cable_contacts, SIM_DT)
             self.cable_state_0, self.cable_state_1 = (self.cable_state_1, self.cable_state_0)
 

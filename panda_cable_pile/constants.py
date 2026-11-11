@@ -40,7 +40,7 @@ CABLE_MODULI = {'cable_A': 100000000.0, 'cable_B': 60000000.0, 'cable_C': 150000
 
 BEND_SCALE = {'cable_A': 0.25, 'cable_B': 0.8, 'cable_C': 0.8, 'cable_free': 0.1}
 
-CABLE_MU = 5.0
+CABLE_MU = 3.0
 
 CABLE_KE = 1000000.0
 
@@ -57,6 +57,7 @@ CONTACT_GAP = 0.004
 HAND_MU = 3.0
 
 HAND_KE = 10000.0
+GRIP_TARGET_NORMAL_FORCE = 25.0  # N normal force per finger
 
 COLOR_KNOT = (0.9, 0.15, 0.1)
 

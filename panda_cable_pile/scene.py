@@ -144,6 +144,7 @@ class SceneMixin:
         panda = self._panda_builder
         panda_q = self.state.body_q.numpy()
         mirror_shapes, hand_bodies, mirror_bodies = ([], [], [])
+        finger_mirrors = []
         hand_cfg = builder.default_shape_cfg.copy()
         hand_cfg.mu = HAND_MU
         hand_cfg.ke = HAND_KE
@@ -160,6 +161,8 @@ class SceneMixin:
             _zero_mass(builder, mirror)
             hand_bodies.append(pb)
             mirror_bodies.append(mirror)
+            if suffix.endswith('finger'):
+                finger_mirrors.append(mirror)
         for i, a in enumerate(mirror_shapes):
             for b in mirror_shapes[i + 1:]:
                 builder.add_shape_collision_filter_pair(a, b)
@@ -171,5 +174,6 @@ class SceneMixin:
                             builder.add_shape_collision_filter_pair(cs, ms)
         self.hand_bodies = wp.array(hand_bodies, dtype=int)
         self.mirror_bodies = wp.array(mirror_bodies, dtype=int)
+        self.finger_mirrors = finger_mirrors
         self.hand_prev_q = wp.array(panda_q[hand_bodies], dtype=wp.transform)
         self.mirror_shapes = mirror_shapes

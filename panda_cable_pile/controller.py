@@ -6,7 +6,7 @@
 import numpy as np
 import warp as wp
 
-from .constants import FRAME_DT, FINGER_OPEN
+from .constants import FRAME_DT, SIM_DT, FINGER_OPEN, GRIP_TARGET_NORMAL_FORCE
 
 class ControllerMixin:
     PHASES = [('settle', None), ('pregrasp', 1.5), ('descend', 1.0), ('close', 0.8), ('hold', 0.3), ('pull', 2.5), ('lift', 1.0), ('release', 0.5), ('retreat', 0.6)]
@@ -21,13 +21,15 @@ class ControllerMixin:
 
     PREGRASP_HEIGHT = 0.12
 
-    GRASP_HEIGHT = 0.012
+    GRASP_HEIGHT = 0.008
 
     PULL_LENGTH = 0.25
 
     FINGER_CLOSED = 0.002
+    GRIP_CLOSE_RATE = 0.1
+    GRIP_RECLOSE_RATE = 0.005  # m/s; gently tighten if pinch force drops while pulling
 
-    LIFT_HEIGHT = 0.15
+    LIFT_HEIGHT = 0.30
 
     def _init_controller(self):
         self.phase_idx = 0
@@ -37,6 +39,10 @@ class ControllerMixin:
         self.settled_at = None
         self.target = None
         self.attached = None
+        self.grip_width = FINGER_OPEN
+        self.grip_force = 0.0
+        self.grip_force_by_finger = {}
+        self.grip_force_reached = False
         self.ik_residuals = {}
         self.cmd = (self.tcp_position(), self.yaw_for_cable_direction((1.0, 0.0)), FINGER_OPEN)
         self.metrics_before = None
@@ -71,6 +77,46 @@ class ControllerMixin:
         self.metrics_before = self.pile_metrics()
         self.links_before = self.link_distances()
 
+    def update_grip_force(self, body0, body1, force_on_body1, normals, count):
+        """Update per-finger normal force and stop/recover closing at the force target."""
+        phase = self.PHASES[self.phase_idx][0]
+        if phase not in ('close', 'pull') or self.target is None:
+            return
+
+        cable_bodies = set(self.target['cable']['bodies'])
+        finger_bodies = set(self.finger_mirrors)
+        finger_forces = {body: 0.0 for body in finger_bodies}
+        for i in range(count):
+            b0, b1 = int(body0[i]), int(body1[i])
+            if b0 in finger_bodies and b1 in cable_bodies:
+                finger_body = b0
+            elif b1 in finger_bodies and b0 in cable_bodies:
+                finger_body = b1
+            else:
+                continue
+
+            normal = normals[i]
+            normal_length = np.linalg.norm(normal)
+            if normal_length > 0.0:
+                finger_forces[finger_body] += abs(float(np.dot(force_on_body1[i], normal / normal_length)))
+
+        self.grip_force_by_finger = finger_forces
+        self.grip_force = sum(finger_forces.values())
+        if not finger_forces:
+            return
+
+        weakest_finger_force = min(finger_forces.values())
+        if phase == 'close':
+            if weakest_finger_force >= GRIP_TARGET_NORMAL_FORCE:
+                self.grip_force_reached = True
+        elif weakest_finger_force < GRIP_TARGET_NORMAL_FORCE and self.grip_width > self.FINGER_CLOSED:
+            # The simulated fingers are kinematic: compensate for a lost pinch by
+            # incrementally reducing the commanded joint width during the pull.
+            self.grip_width = max(
+                self.FINGER_CLOSED,
+                self.grip_width - self.GRIP_RECLOSE_RATE * SIM_DT,
+            )
+
     def controller_command(self):
         """Scripted state machine -> (tcp [3], hand yaw, finger width)."""
         name, duration = self.PHASES[self.phase_idx]
@@ -90,15 +136,18 @@ class ControllerMixin:
         if name == 'descend':
             return (above * (1 - s) + T['point'] * s, yaw, FINGER_OPEN)
         if name == 'close':
-            return (T['point'], yaw, FINGER_OPEN + (self.FINGER_CLOSED - FINGER_OPEN) * s)
+            if not self.grip_force_reached:
+                self.grip_width = max(self.FINGER_CLOSED, self.grip_width - self.GRIP_CLOSE_RATE * FRAME_DT)
+            return (T['point'], yaw, self.grip_width)
         if name == 'hold':
-            return (T['point'], yaw, self.FINGER_CLOSED)
+            return (T['point'], yaw, self.grip_width)
         if name == 'pull':
-            return (T['point'] * (1 - u) + pulled * u, yaw, self.FINGER_CLOSED)
+            return (T['point'] * (1 - u) + pulled * u, yaw, self.grip_width)
         if name == 'lift':
-            return (pulled * (1 - s) + lifted * s, yaw, self.FINGER_CLOSED)
+            return (pulled * (1 - s) + lifted * s, yaw, self.grip_width)
         if name == 'release':
-            return (lifted, yaw, self.FINGER_CLOSED + (FINGER_OPEN - self.FINGER_CLOSED) * s)
+            width = self.grip_width + (FINGER_OPEN - self.grip_width) * s
+            return (lifted, yaw, width)
         return (lifted + np.array([0.0, 0.0, 0.15 * s]), yaw, FINGER_OPEN)
 
     def _advance_phase(self):
@@ -115,7 +164,20 @@ class ControllerMixin:
                     return
                 print(f'WARNING: pile not at rest after {self.settle_duration:.1f}s (max v={lin:.4f} m/s, w={ang:.3f} rad/s); starting the arm anyway')
             self.settled_at = self.sim_time
-        elif self.phase_time + 1e-09 < duration or self.phase_idx == len(self.PHASES) - 1:
+        elif name == 'close':
+            at_force_target = self.grip_force_reached
+            at_closure_limit = self.grip_width <= self.FINGER_CLOSED + 1e-06
+            if not (at_force_target or at_closure_limit):
+                return
+            if not at_force_target:
+                print(
+                    f'WARNING: grip target {GRIP_TARGET_NORMAL_FORCE:.1f} N per finger not reached; '
+                    f'closure limit reached at {self.grip_width:.4f} m '
+                    f'(measured per-finger forces: {self.grip_force_by_finger})'
+                )
+        elif self.phase_time + 1e-09 < duration:
+            return
+        elif self.phase_idx == len(self.PHASES) - 1:
             return
         if name in ('pregrasp', 'descend'):
             self.ik_residuals[name] = float(np.linalg.norm(self.tcp_position() - self.cmd[0]))
@@ -130,6 +192,11 @@ class ControllerMixin:
         self.phase_idx += 1
         self.phase_time = 0.0
         new = self.PHASES[self.phase_idx][0]
+        if new == 'close':
+            self.grip_width = FINGER_OPEN
+            self.grip_force = 0.0
+            self.grip_force_by_finger = {}
+            self.grip_force_reached = False
         if new == 'pregrasp':
             self._plan_grasp()
             self.home_tcp = self.tcp_position()
