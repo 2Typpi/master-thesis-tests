@@ -6,7 +6,7 @@ import mujoco
 import numpy as np
 from ml_collections import config_dict
 
-from fr3 import Fr3Base
+from mujoco_plain.fr3 import Fr3Base
 
 
 _ARM_JOINTS = [f"fr3v2_joint{i}" for i in range(1, 8)]

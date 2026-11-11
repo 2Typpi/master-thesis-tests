@@ -2,7 +2,7 @@ from stable_baselines3 import PPO
 from stable_baselines3.common.env_checker import check_env
 from stable_baselines3.common.monitor import Monitor
 
-from fr3_gymnasium import Fr3GymnasiumEnv
+from mujoco_plain.fr3_gymnasium import Fr3GymnasiumEnv
 
 check_env(Fr3GymnasiumEnv())
 

@@ -2,7 +2,7 @@ import gymnasium as gym
 from gymnasium import spaces
 import numpy as np
 
-from pickplace import Fr3PickPlace
+from mujoco_plain.pickplace import Fr3PickPlace
 
 
 class Fr3GymnasiumEnv(gym.Env):
