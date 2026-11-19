@@ -9,7 +9,7 @@ import warp as wp
 import newton
 
 from .camera import RGBDCameraMixin
-from .constants import HOME_Q, FINGER_OPEN, CABLE_RADIUS, FRAME_DT, SIM_SUBSTEPS, SIM_DT
+from .constants import HOME_Q, FINGER_OPEN, CABLE_RADIUS, FRAME_DT, SIM_SUBSTEPS, SIM_DT, RENDER_MODES
 from .controller import ControllerMixin
 from .kernels import _snapshot_hand_poses, _update_hand_mirrors, _drive_attached, _capsule_xforms
 from .scene import SceneMixin
@@ -24,6 +24,9 @@ class Panda(SceneMixin, ControllerMixin, RGBDCameraMixin):
         self.seed = getattr(args, 'seed', 0)
         self.settle_time = getattr(args, 'settle_time', 2.0)
         self.filter_mirrors = getattr(args, 'filter_mirrors', False)
+        self.render_mode = getattr(args, 'render_mode', 'neutral')
+        assert self.render_mode in RENDER_MODES, f'render_mode must be one of {RENDER_MODES}'
+        self.camera_options = {k: getattr(args, k) for k in ('camera_height', 'camera_fov', 'camera_light', 'camera_table', 'camera_size') if getattr(args, k, None) is not None}
         self.unlink_control = getattr(args, 'unlink_control', False)
         self.device = viewer.device if hasattr(viewer, 'device') else wp.get_device()
         self._build_panda()

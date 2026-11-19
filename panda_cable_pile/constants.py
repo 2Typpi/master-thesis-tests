@@ -66,3 +66,30 @@ COLOR_LINKED = (0.95, 0.6, 0.1)
 COLOR_FREE = (0.1, 0.7, 0.2)
 
 COLOR_OTHER = (0.35, 0.5, 0.85)
+
+# --- RGB-D camera defaults (overridable through Panda(args) / _setup_rgbd_camera) ---
+CAMERA_POSITION = (0.0, 0.0, 0.8)
+CAMERA_QUAT_XYZW = (0.0, 0.0, 0.0, 1.0)  # identity: looks straight down (-z)
+CAMERA_FOV_Y_DEG = 55.0  # VERTICAL field of view (Newton convention)
+CAMERA_SIZE = (1280, 960)  # (width, height)
+CAMERA_LIGHT_DIRECTION = (-0.57735026, 0.57735026, -0.57735026)
+CAMERA_TABLE_COLOR = (0.55, 0.5, 0.42)
+
+# --- Visual attributes of cables (what a VLM can see), independent of the simulator role ---
+# 'neutral': colour drawn per cable from CABLE_PALETTE with a seeded RNG, uncorrelated with the role.
+# 'uniform': every cable has the same colour (topology-only prompts).
+# 'role':    today's role-coded colours (control mode; leaks the role to a VLM).
+RENDER_MODES = ('neutral', 'uniform', 'role')
+CABLE_PALETTE = {
+    'red': (0.85, 0.10, 0.10),
+    'blue': (0.15, 0.25, 0.85),
+    'green': (0.10, 0.65, 0.15),
+    'black': (0.08, 0.08, 0.08),
+    'white': (0.95, 0.95, 0.95),
+}
+UNIFORM_COLOR_NAME = 'white'
+
+# Simulator-internal role per cable label (never shown to a model; used for ground truth only).
+ROLE_BY_LABEL = {'cable_A': 'knot', 'cable_B': 'linked', 'cable_C': 'linked', 'cable_free': 'free'}
+ROLE_DEFAULT = 'other'
+ROLE_COLOR_NAMES = {'knot': 'red', 'linked': 'orange', 'free': 'green', 'other': 'blue'}

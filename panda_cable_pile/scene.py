@@ -14,6 +14,7 @@ from .constants import (
     BEND_SCALE, CABLE_MU, CABLE_KE, CABLE_KD, BEND_DAMPING, STRETCH_DAMPING,
     CONTACT_GAP, HAND_MU, HAND_KE, COLOR_KNOT, COLOR_LINKED, COLOR_FREE, COLOR_OTHER,
     PILE_CENTER, SIM_ITERATIONS, FRICTION_EPS,
+    CABLE_PALETTE, UNIFORM_COLOR_NAME, ROLE_BY_LABEL, ROLE_DEFAULT, ROLE_COLOR_NAMES,
 )
 from .geometry import chain_points, free_cable_points, random_cable_points, _zero_mass
 from .kernels import quat_to_vec4
@@ -77,6 +78,20 @@ class SceneMixin:
         seg = float(np.mean(np.linalg.norm(np.diff(pts, axis=0), axis=1)))
         return (bodies, seg)
 
+    def _cable_attrs(self, label, role_rgb, attr_rng) -> dict:
+        """Visual attributes of one cable. ``role`` is simulator-internal; ``colour_name``/``rgb`` is what the camera shows.
+
+        Draw order follows the cable order, so a seed always gives the same colours. The draw happens in every
+        render mode, so switching modes never changes the colours of the other modes.
+        """
+        role = ROLE_BY_LABEL.get(label, ROLE_DEFAULT)
+        names = list(CABLE_PALETTE)
+        drawn = names[int(attr_rng.integers(len(names)))]
+        if self.render_mode == 'role':
+            return {'role': role, 'colour_name': ROLE_COLOR_NAMES[role], 'rgb': tuple(float(c) for c in role_rgb)}
+        name = UNIFORM_COLOR_NAME if self.render_mode == 'uniform' else drawn
+        return {'role': role, 'colour_name': name, 'rgb': CABLE_PALETTE[name]}
+
     def _build_cables(self, rng):
         center = PILE_CENTER
         chain, _ = chain_points(-0.03, 0.0)
@@ -100,10 +115,11 @@ class SceneMixin:
         builder.default_shape_cfg.mu = CABLE_MU
         builder.rigid_gap = CONTACT_GAP
         self.cables = []
+        attr_rng = np.random.default_rng([self.seed, 1])  # separate stream: colours must not change the pile layout
         for pts, label, colour in specs:
             modulus = CABLE_MODULI.get(label, YOUNGS_MODULUS)
             bodies, seg = self._add_cable(builder, pts, label, modulus)
-            self.cables.append({'name': label, 'bodies': bodies, 'seg': seg, 'colour': colour, 'pts0': pts})
+            self.cables.append({'name': label, 'bodies': bodies, 'seg': seg, 'colour': colour, 'pts0': pts, 'attrs': self._cable_attrs(label, colour, attr_rng)})
         self._add_hand_mirrors(builder)
         builder.add_ground_plane()
         builder.color()
@@ -123,7 +139,7 @@ class SceneMixin:
         self.capsule_buffers = []
         for c in self.cables:
             n = len(c['bodies'])
-            self.capsule_buffers.append((wp.empty(n, dtype=wp.transform), wp.full(n, wp.vec3(CABLE_RADIUS, CABLE_RADIUS, 0.5 * c['seg']), dtype=wp.vec3), wp.full(n, wp.vec3(*c['colour']), dtype=wp.vec3)))
+            self.capsule_buffers.append((wp.empty(n, dtype=wp.transform), wp.full(n, wp.vec3(CABLE_RADIUS, CABLE_RADIUS, 0.5 * c['seg']), dtype=wp.vec3), wp.full(n, wp.vec3(*c['attrs']['rgb']), dtype=wp.vec3)))
         self.sim_time = 0.0
         self.frame = 0
 

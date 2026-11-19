@@ -37,6 +37,7 @@ class ControllerMixin:
         self.settle_duration = self.settle_time
         self.rest_time = 0.0
         self.settled_at = None
+        self.settled_at_rest = None
         self.target = None
         self.attached = None
         self.grip_width = FINGER_OPEN
@@ -164,6 +165,7 @@ class ControllerMixin:
                     return
                 print(f'WARNING: pile not at rest after {self.settle_duration:.1f}s (max v={lin:.4f} m/s, w={ang:.3f} rad/s); starting the arm anyway')
             self.settled_at = self.sim_time
+            self.settled_at_rest = bool(at_rest)
         elif name == 'close':
             at_force_target = self.grip_force_reached
             at_closure_limit = self.grip_width <= self.FINGER_CLOSED + 1e-06
