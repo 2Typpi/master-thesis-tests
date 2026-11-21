@@ -9,8 +9,9 @@ import warp as wp
 import newton
 
 from .camera import RGBDCameraMixin
-from .constants import HOME_Q, FINGER_OPEN, CABLE_RADIUS, FRAME_DT, SIM_SUBSTEPS, SIM_DT, RENDER_MODES
+from .constants import CABLE_RADIUS, FRAME_DT, SIM_SUBSTEPS, SIM_DT, RENDER_MODES
 from .controller import ControllerMixin
+from .robots import ROBOTS, DEFAULT_ROBOT
 from .kernels import _snapshot_hand_poses, _update_hand_mirrors, _drive_attached, _capsule_xforms
 from .scene import SceneMixin
 
@@ -18,6 +19,9 @@ class Panda(SceneMixin, ControllerMixin, RGBDCameraMixin):
     def __init__(self, viewer, args=None):
         self.viewer = viewer
         self.args = args
+        robot_name = getattr(args, 'robot', None) or DEFAULT_ROBOT
+        assert robot_name in ROBOTS, f'robot must be one of {tuple(ROBOTS)}'
+        self.robot = ROBOTS[robot_name]
         self.pull = getattr(args, 'pull', 'knot')
         self.grasp = getattr(args, 'grasp', 'friction')
         self.num_cables = max(4, getattr(args, 'num_cables', 6))
@@ -34,15 +38,15 @@ class Panda(SceneMixin, ControllerMixin, RGBDCameraMixin):
         self.reset(self.seed)
         self.viewer.set_model(self.model)
         self.viewer.picking_enabled = False
-        self.viewer.set_camera(wp.vec3(0.75, -0.85, 0.55), pitch=-28.0, yaw=135.0)
+        self.viewer.set_camera(wp.vec3(*self.robot.scene.viewer_camera), pitch=-28.0, yaw=135.0)
 
     def reset(self, seed: int | None=None):
         """Rebuild the pile for ``seed`` and restart the controller."""
         if seed is not None:
             self.seed = seed
         rng = np.random.default_rng(self.seed)
-        self.joint_q_ik.assign(np.array([HOME_Q], dtype=np.float32))
-        self.set_arm(FINGER_OPEN)
+        self.joint_q_ik.assign(np.array([self.robot.home_q], dtype=np.float32))
+        self.set_arm(self.robot.grip_open)
         self._build_cables(rng)
         self._init_controller()
 

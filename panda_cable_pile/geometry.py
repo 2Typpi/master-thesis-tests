@@ -8,6 +8,7 @@ import warp as wp
 import newton
 
 from .constants import CABLE_RADIUS, CABLE_LENGTH, CABLE_SEGMENTS
+from .robots import SEGMENT_LENGTH
 
 def _resample(points: np.ndarray, n_segments: int) -> np.ndarray:
     """Resample a polyline into ``n_segments`` equal-length segments."""
@@ -39,7 +40,7 @@ def line(a, b, n=60):
     a, b = (np.asarray(a, float), np.asarray(b, float))
     return a + (b - a) * np.linspace(0, 1, n)[:, None]
 
-def chain_points(x0, y0, r=CABLE_RADIUS, R=0.03, tail=0.2, body_ab=0.11, tail_c=0.12, seg=0.0125):
+def chain_points(x0, y0, r=CABLE_RADIUS, R=0.03, tail=0.2, body_ab=0.11, tail_c=0.12, seg=SEGMENT_LENGTH):
     """Three interlocked cables A-B-C along +y. A's tail tip is its LAST point (graspable, pulled -y).
 
     A: vertical eye (yz plane) at y0; B: horizontal eye hooked through A's, a straight body, then a
@@ -67,19 +68,19 @@ def chain_points(x0, y0, r=CABLE_RADIUS, R=0.03, tail=0.2, body_ab=0.11, tail_c=
     n_eye = int(round(eye_len / seg))
     return (out, n_eye)
 
-def free_cable_points(center: np.ndarray, length: float=CABLE_LENGTH) -> np.ndarray:
-    """Straight cable along y with its +y end exposed (about 0.2 m past the centre)."""
-    ys = np.linspace(center[1] + 0.2 - length, center[1] + 0.2, CABLE_SEGMENTS + 1)
+def free_cable_points(center: np.ndarray, length: float=CABLE_LENGTH, n_segments: int=CABLE_SEGMENTS, reach: float=0.2) -> np.ndarray:
+    """Straight cable along y with its +y end exposed (``reach`` past the centre)."""
+    ys = np.linspace(center[1] + reach - length, center[1] + reach, n_segments + 1)
     pts = np.stack([np.full_like(ys, center[0]), ys, np.full_like(ys, CABLE_RADIUS + 0.001)], axis=1)
     return pts
 
-def random_cable_points(rng: np.random.Generator, center: np.ndarray, z0: float) -> np.ndarray:
+def random_cable_points(rng: np.random.Generator, center: np.ndarray, z0: float, length: float=CABLE_LENGTH, n_segments: int=CABLE_SEGMENTS, spread: float=0.07) -> np.ndarray:
     """Gently curved cable dropped from ``z0`` with a random pose."""
-    start = np.array([center[0], center[1]]) + rng.uniform(-0.07, 0.07, 2)
+    start = np.array([center[0], center[1]]) + rng.uniform(-spread, spread, 2)
     heading = rng.uniform(0, 2 * np.pi)
-    step = CABLE_LENGTH / CABLE_SEGMENTS
+    step = length / n_segments
     pts = [np.array([start[0], start[1], z0])]
-    for _ in range(CABLE_SEGMENTS):
+    for _ in range(n_segments):
         heading += rng.normal(0.0, 0.12)
         pts.append(pts[-1] + step * np.array([np.cos(heading), np.sin(heading), 0.0]))
     pts = np.array(pts)

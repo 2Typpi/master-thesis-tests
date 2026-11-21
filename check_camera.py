@@ -161,8 +161,8 @@ def audit(panda, label, z_depth_control=True):
     return ok, res
 
 
-def make_panda(seed, **camera_options):
-    parser = argparse.Namespace(seed=seed, num_cables=6, render_mode='neutral', **camera_options)
+def make_panda(seed, robot=None, **camera_options):
+    parser = argparse.Namespace(seed=seed, num_cables=6, render_mode='neutral', robot=robot, **camera_options)
     viewer = newton.viewer.ViewerNull(num_frames=1)
     return Panda(viewer, parser)
 
@@ -171,11 +171,12 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--frames', type=int, default=30, help='frames to step before capturing (so cables are not in their initial pose)')
     ap.add_argument('--seeds', type=int, nargs='+', default=[0, 1])
+    ap.add_argument('--robot', default=None, help='robot spec name (default: the package default)')
     args = ap.parse_args()
 
     failures = 0
     for seed in args.seeds:
-        panda = make_panda(seed)
+        panda = make_panda(seed, robot=args.robot)
         for _ in range(args.frames):
             panda.step()
         poses = [
@@ -193,13 +194,13 @@ def main():
             ok, _ = audit(panda, f'seed {seed}: {name}')
             failures += (not ok)
     # a different resolution / fov, to check K is not hard-wired to the defaults
-    panda = make_panda(0, camera_size=(640, 480), camera_fov=40.0, camera_height=0.6)
+    panda = make_panda(0, robot=args.robot, camera_size=(640, 480), camera_fov=40.0, camera_height=0.6)
     for _ in range(args.frames):
         panda.step()
     ok, _ = audit(panda, 'seed 0: 640x480, fov 40, z=0.6')
     failures += (not ok)
     # table visible: planes must not be labelled as cables
-    panda = make_panda(0, camera_table=True, camera_light='lit')
+    panda = make_panda(0, robot=args.robot, camera_table=True, camera_light='lit')
     for _ in range(args.frames):
         panda.step()
     ok, res = audit(panda, 'seed 0: table + light enabled')

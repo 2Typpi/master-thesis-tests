@@ -9,65 +9,85 @@ import newton
 import newton.ik as ik
 
 from .constants import (
-    HOME_Q, PANDA_BASE, HAND_COLLISION_LINKS, TCP_OFFSET, FINGER_OPEN,
-    CABLE_RADIUS, CABLE_LENGTH, CABLE_SEGMENTS, YOUNGS_MODULUS, CABLE_MODULI,
+    CABLE_RADIUS, YOUNGS_MODULUS, CABLE_MODULI,
     BEND_SCALE, CABLE_MU, CABLE_KE, CABLE_KD, BEND_DAMPING, STRETCH_DAMPING,
     CONTACT_GAP, HAND_MU, HAND_KE, COLOR_KNOT, COLOR_LINKED, COLOR_FREE, COLOR_OTHER,
-    PILE_CENTER, SIM_ITERATIONS, FRICTION_EPS,
+    SIM_ITERATIONS, FRICTION_EPS,
     CABLE_PALETTE, UNIFORM_COLOR_NAME, ROLE_BY_LABEL, ROLE_DEFAULT, ROLE_COLOR_NAMES,
 )
 from .geometry import chain_points, free_cable_points, random_cable_points, _zero_mass
 from .kernels import quat_to_vec4
+from .robots import SEGMENT_LENGTH
 
 class SceneMixin:
     def _build_panda(self):
+        """Build the robot model (name kept for history; it loads whichever ``self.robot`` is selected)."""
+        robot = self.robot
         builder = newton.ModelBuilder()
-        asset = newton.utils.download_asset('franka_emika_panda')
-        builder.add_urdf(str(asset / 'urdf' / 'fr3_franka_hand.urdf'), xform=wp.transform(PANDA_BASE, wp.quat_identity()), floating=False, enable_self_collisions=False, collapse_fixed_joints=True)
-        builder.joint_q[:len(HOME_Q)] = HOME_Q
+        robot.load(builder, wp.transform(robot.scene.base_pos, wp.quat_identity()))
+        builder.joint_q[:len(robot.home_q)] = robot.home_q
         builder.add_ground_plane()
         self._panda_builder = builder
-        self.hand_body = next((i for i, l in enumerate(builder.body_label) if l.endswith('/fr3_link7')))
+        self.hand_body = next((i for i, l in enumerate(builder.body_label) if l.endswith(robot.hand_body_suffix)))
         self.model = builder.finalize()
         self.state = self.model.state()
         newton.eval_fk(self.model, self.model.joint_q, self.model.joint_qd, self.state)
 
     def _setup_ik(self):
-        self.pos_obj = ik.IKObjectivePosition(link_index=self.hand_body, link_offset=wp.vec3(*TCP_OFFSET), target_positions=wp.array([wp.vec3(0.0, 0.0, 0.5)], dtype=wp.vec3))
-        self.rot_obj = ik.IKObjectiveRotation(link_index=self.hand_body, link_offset_rotation=wp.quat_identity(), target_rotations=wp.array([wp.vec4(1.0, 0.0, 0.0, 0.0)], dtype=wp.vec4))
+        robot = self.robot
+        assert robot.ik_mode == 'pose6d', f'unsupported ik_mode {robot.ik_mode!r}'
+        self.pos_obj = ik.IKObjectivePosition(link_index=self.hand_body, link_offset=wp.vec3(*robot.tcp_offset), target_positions=wp.array([wp.vec3(0.0, 0.0, 0.5)], dtype=wp.vec3))
+        self.rot_obj = ik.IKObjectiveRotation(link_index=self.hand_body, link_offset_rotation=wp.quat_identity(), target_rotations=wp.array([wp.vec4(1.0, 0.0, 0.0, 0.0)], dtype=wp.vec4), weight=robot.ik_rot_weight)
         self.limit_obj = ik.IKObjectiveJointLimit(joint_limit_lower=self.model.joint_limit_lower, joint_limit_upper=self.model.joint_limit_upper)
-        self.joint_q_ik = wp.array(np.array([HOME_Q], dtype=np.float32), dtype=wp.float32)
+        self.joint_q_ik = wp.array(np.array([robot.home_q], dtype=np.float32), dtype=wp.float32)
         self.ik_iters = 24
         self.ik_solver = ik.IKSolver(model=self.model, n_problems=1, objectives=[self.pos_obj, self.rot_obj, self.limit_obj], lambda_initial=0.1, jacobian_mode=ik.IKJacobianType.ANALYTIC)
 
-    @staticmethod
-    def hand_rotation(yaw_a: float) -> wp.quat:
-        """Gripper pointing down; ``yaw_a`` is the rotation about the tool z."""
-        q = wp.quat_from_axis_angle(wp.vec3(1.0, 0.0, 0.0), np.pi)
-        return wp.mul(q, wp.quat_from_axis_angle(wp.vec3(0.0, 0.0, 1.0), yaw_a))
+    def hand_rotation(self, yaw_a: float) -> wp.quat:
+        """Tool orientation for ``yaw_a`` (robot-specific convention)."""
+        return self.robot.hand_rotation(yaw_a)
 
-    @staticmethod
-    def yaw_for_cable_direction(direction_xy) -> float:
-        """Hand angle that makes the fingers open perpendicular to a cable running along ``direction_xy``.
+    def yaw_for_cable_direction(self, direction_xy) -> float:
+        """Hand angle that makes the gripper open perpendicular to a cable running along ``direction_xy``."""
+        return self.robot.yaw_for_cable_direction(direction_xy)
 
-            Measured: with this hand_rotation the finger axis points at 3*pi/4 - yaw in the xy plane.
-            """
-        phi = float(np.arctan2(direction_xy[1], direction_xy[0]))
-        return np.pi / 4 - phi
+    def select_yaw_branch(self, tcp: np.ndarray, yaw_a: float) -> float:
+        """Pick the equivalent yaw (shifted by multiples of ``yaw_period``) whose wrist roll is closest to the current one.
+
+        Only for grippers with ``yaw_period`` set; returns ``yaw_a`` unchanged otherwise (Panda path).
+        """
+        r = self.robot
+        if r.yaw_period is None:
+            return yaw_a
+        base = r.scene.base_pos
+        azimuth = float(np.arctan2(tcp[1] - base[1], tcp[0] - base[0]))
+        cur = float(self.joint_q_ik.numpy()[0][r.roll_dof])
+        lo, hi = (r.roll_limits[0] + 0.25, r.roll_limits[1] - 0.25)  # margin covers the ~0.1 rad azimuth-model error
+        best = None
+        for k in range(-4, 5):
+            for m in (-1, 0, 1):
+                roll = yaw_a + k * r.yaw_period - azimuth - r.roll_offset + 2.0 * np.pi * m
+                if lo <= roll <= hi and (best is None or abs(roll - cur) < abs(best - cur)):
+                    best = roll
+        if best is None:  # no branch inside the limits; fall back to the nearest allowed roll
+            best = float(np.clip(yaw_a - azimuth - r.roll_offset, lo, hi))
+        return best + azimuth + r.roll_offset
 
     def solve_ik(self, tcp: np.ndarray, yaw_a: float, iters: int | None=None):
+        yaw_a = self.select_yaw_branch(tcp, yaw_a)
         self.pos_obj.set_target_positions(wp.array([wp.vec3(*tcp)], dtype=wp.vec3))
         self.rot_obj.set_target_rotations(wp.array([quat_to_vec4(self.hand_rotation(yaw_a))], dtype=wp.vec4))
         self.ik_solver.step(self.joint_q_ik, self.joint_q_ik, iterations=iters or self.ik_iters)
 
     def tcp_position(self) -> np.ndarray:
         xf = wp.transform(*self.state.body_q.numpy()[self.hand_body])
-        return np.array(wp.transform_point(xf, wp.vec3(*TCP_OFFSET)))
+        return np.array(wp.transform_point(xf, wp.vec3(*self.robot.tcp_offset)))
 
     def set_arm(self, finger_width: float):
-        """Write IK solution + finger width into the Panda model and update FK."""
+        """Write IK solution + gripper command into the robot model and update FK."""
         q = self.joint_q_ik.numpy()[0].copy()
-        q[7] = q[8] = finger_width
+        for dof in self.robot.gripper_dofs:
+            q[dof] = finger_width
         self.model.joint_q.assign(q)
         newton.eval_fk(self.model, self.model.joint_q, self.model.joint_qd, self.state)
 
@@ -93,19 +113,21 @@ class SceneMixin:
         return {'role': role, 'colour_name': name, 'rgb': CABLE_PALETTE[name]}
 
     def _build_cables(self, rng):
-        center = PILE_CENTER
-        chain, _ = chain_points(-0.03, 0.0)
+        sc = self.robot.scene
+        center = np.array(sc.pile_center)
+        n_seg = sc.cable_segments
+        chain, _ = chain_points(*sc.chain_origin, R=sc.chain_R, tail=sc.chain_tail, body_ab=sc.chain_body_ab, tail_c=sc.chain_tail_c, seg=SEGMENT_LENGTH)
         if self.unlink_control:
-            chain['B'] = chain['B'] + np.array([0.12, 0.0, 0.0])
-            chain['C'] = chain['C'] + np.array([0.12, 0.0, 0.0])
+            chain['B'] = chain['B'] + np.array([sc.unlink_shift, 0.0, 0.0])
+            chain['C'] = chain['C'] + np.array([sc.unlink_shift, 0.0, 0.0])
         knot_pts = chain['A']
-        free_pts = free_cable_points(center + np.array([0.11, -0.03]))
+        free_pts = free_cable_points(center + np.array(sc.free_offset), length=sc.cable_length, n_segments=n_seg, reach=sc.free_reach)
         specs = [(chain['A'], 'cable_A', COLOR_KNOT), (chain['B'], 'cable_B', COLOR_LINKED), (chain['C'], 'cable_C', COLOR_LINKED), (free_pts, 'cable_free', COLOR_FREE)]
         self.grasp_info = {'knot': self._grasp_from_tail(knot_pts, -1), 'free': self._grasp_from_tail(free_pts, -1)}
         keep_clear = [self.grasp_info[k]['point'][:2] for k in self.grasp_info]
         for k in range(max(0, self.num_cables - 4)):
             for _ in range(50):
-                pts = random_cable_points(rng, center, z0=0.09 + 0.014 * k)
+                pts = random_cable_points(rng, center, z0=0.09 + 0.014 * k, length=sc.cable_length, n_segments=n_seg, spread=sc.random_spread)
                 if all((np.min(np.linalg.norm(pts[:, :2] - c, axis=1)) > 0.06 for c in keep_clear)):
                     break
             specs.append((pts, f'cable_{k}', COLOR_OTHER))
@@ -164,7 +186,7 @@ class SceneMixin:
         hand_cfg = builder.default_shape_cfg.copy()
         hand_cfg.mu = HAND_MU
         hand_cfg.ke = HAND_KE
-        for suffix in HAND_COLLISION_LINKS:
+        for suffix in self.robot.mirror_links:
             pb = next((i for i, l in enumerate(panda.body_label) if l.endswith(suffix)))
             mirror = builder.add_body(xform=wp.transform(*panda_q[pb]), is_kinematic=True, label=f'mirror_{suffix}')
             for sh in range(panda.shape_count):
@@ -177,7 +199,7 @@ class SceneMixin:
             _zero_mass(builder, mirror)
             hand_bodies.append(pb)
             mirror_bodies.append(mirror)
-            if suffix.endswith('finger'):
+            if suffix in self.robot.finger_links:
                 finger_mirrors.append(mirror)
         for i, a in enumerate(mirror_shapes):
             for b in mirror_shapes[i + 1:]:

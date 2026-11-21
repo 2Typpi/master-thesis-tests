@@ -4,19 +4,22 @@
 """Shared scene and simulation parameters."""
 
 import numpy as np
-import warp as wp
 
-HOME_Q = [0.0, -0.4, 0.0, -2.2, 0.0, 1.8, 0.785, 0.04, 0.04]
+# Robot-specific values (home pose, TCP offset, gripper convention, pile layout) live in robots.py.
+# The Panda values are re-exported here for backward compatibility.
+from .robots import PANDA
 
-PANDA_BASE = (-0.45, 0.0, 0.0)
+HOME_Q = list(PANDA.home_q)
 
-PILE_CENTER = np.array([0.0, 0.0])
+PANDA_BASE = PANDA.scene.base_pos
 
-HAND_COLLISION_LINKS = ['/fr3_link7', '/fr3_leftfinger', '/fr3_rightfinger']
+PILE_CENTER = np.array(PANDA.scene.pile_center)
 
-TCP_OFFSET = (0.0, 0.0, 0.21)
+HAND_COLLISION_LINKS = list(PANDA.mirror_links)
 
-FINGER_OPEN = 0.04
+TCP_OFFSET = PANDA.tcp_offset
+
+FINGER_OPEN = PANDA.grip_open
 
 FRAME_DT = 1.0 / 60.0
 
@@ -30,7 +33,7 @@ CABLE_RADIUS = 0.004
 
 CABLE_LENGTH = 0.5
 
-CABLE_SEGMENTS = 40
+CABLE_SEGMENTS = 60
 
 KNOT_SEGMENTS = 60
 

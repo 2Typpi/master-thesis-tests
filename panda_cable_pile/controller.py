@@ -6,7 +6,7 @@
 import numpy as np
 import warp as wp
 
-from .constants import FRAME_DT, SIM_DT, FINGER_OPEN, GRIP_TARGET_NORMAL_FORCE
+from .constants import FRAME_DT, SIM_DT
 
 class ControllerMixin:
     PHASES = [('settle', None), ('pregrasp', 1.5), ('descend', 1.0), ('close', 0.8), ('hold', 0.3), ('pull', 2.5), ('lift', 1.0), ('release', 0.5), ('retreat', 0.6)]
@@ -31,7 +31,24 @@ class ControllerMixin:
 
     LIFT_HEIGHT = 0.30
 
+    RETREAT_RISE = 0.15
+
+    def _apply_robot_preset(self):
+        """Shadow the class-level defaults with the selected robot's gripper convention and scene heights."""
+        r, sc = (self.robot, self.robot.scene)
+        self.FINGER_OPEN = r.grip_open
+        self.FINGER_CLOSED = r.grip_closed
+        self.GRIP_CLOSE_RATE = r.grip_close_rate
+        self.GRIP_RECLOSE_RATE = r.grip_reclose_rate
+        self.GRIP_TARGET_FORCE = r.grip_target_force
+        self.PREGRASP_HEIGHT = sc.pregrasp_height
+        self.GRASP_HEIGHT = sc.grasp_height
+        self.PULL_LENGTH = sc.pull_length
+        self.LIFT_HEIGHT = sc.lift_height
+        self.RETREAT_RISE = sc.retreat_rise
+
     def _init_controller(self):
+        self._apply_robot_preset()
         self.phase_idx = 0
         self.phase_time = 0.0
         self.settle_duration = self.settle_time
@@ -40,12 +57,19 @@ class ControllerMixin:
         self.settled_at_rest = None
         self.target = None
         self.attached = None
-        self.grip_width = FINGER_OPEN
+        self.grip_width = self.FINGER_OPEN
         self.grip_force = 0.0
         self.grip_force_by_finger = {}
         self.grip_force_reached = False
         self.ik_residuals = {}
-        self.cmd = (self.tcp_position(), self.yaw_for_cable_direction((1.0, 0.0)), FINGER_OPEN)
+        initial_tcp = self.tcp_position()
+        initial_yaw = self.yaw_for_cable_direction((1.0, 0.0))
+        if self.robot.roll_dof is not None:
+            base = np.asarray(self.robot.scene.base_pos)
+            azimuth = float(np.arctan2(initial_tcp[1] - base[1], initial_tcp[0] - base[0]))
+            wrist_roll = float(self.joint_q_ik.numpy()[0][self.robot.roll_dof])
+            initial_yaw = wrist_roll + azimuth + self.robot.roll_offset
+        self.cmd = (initial_tcp, initial_yaw, self.FINGER_OPEN)
         self.metrics_before = None
         self.metrics_after = None
         self.links_after = None
@@ -74,7 +98,11 @@ class ControllerMixin:
         direction /= np.linalg.norm(direction)
         point[2] = self.GRASP_HEIGHT
         self.target = {'cable': cable, 'point': point, 'dir': direction, 'seg_index': n - 4}
-        self.target['yaw'] = self.yaw_for_cable_direction(direction)
+        target_yaw = self.yaw_for_cable_direction(direction)
+        yaw_period = self.robot.yaw_period
+        if yaw_period is not None:
+            target_yaw += round((self.cmd[1] - target_yaw) / yaw_period) * yaw_period
+        self.target['yaw'] = target_yaw
         self.metrics_before = self.pile_metrics()
         self.links_before = self.link_distances()
 
@@ -108,9 +136,9 @@ class ControllerMixin:
 
         weakest_finger_force = min(finger_forces.values())
         if phase == 'close':
-            if weakest_finger_force >= GRIP_TARGET_NORMAL_FORCE:
+            if weakest_finger_force >= self.GRIP_TARGET_FORCE:
                 self.grip_force_reached = True
-        elif weakest_finger_force < GRIP_TARGET_NORMAL_FORCE and self.grip_width > self.FINGER_CLOSED:
+        elif weakest_finger_force < self.GRIP_TARGET_FORCE and self.grip_width > self.FINGER_CLOSED:
             # The simulated fingers are kinematic: compensate for a lost pinch by
             # incrementally reducing the commanded joint width during the pull.
             self.grip_width = max(
@@ -133,9 +161,9 @@ class ControllerMixin:
         if name == 'pregrasp':
             tcp = self.home_tcp * (1 - s) + above * s
             yaw = self.home_yaw * (1 - s) + yaw * s
-            return (tcp, yaw, FINGER_OPEN)
+            return (tcp, yaw, self.FINGER_OPEN)
         if name == 'descend':
-            return (above * (1 - s) + T['point'] * s, yaw, FINGER_OPEN)
+            return (above * (1 - s) + T['point'] * s, yaw, self.FINGER_OPEN)
         if name == 'close':
             if not self.grip_force_reached:
                 self.grip_width = max(self.FINGER_CLOSED, self.grip_width - self.GRIP_CLOSE_RATE * FRAME_DT)
@@ -147,9 +175,9 @@ class ControllerMixin:
         if name == 'lift':
             return (pulled * (1 - s) + lifted * s, yaw, self.grip_width)
         if name == 'release':
-            width = self.grip_width + (FINGER_OPEN - self.grip_width) * s
+            width = self.grip_width + (self.FINGER_OPEN - self.grip_width) * s
             return (lifted, yaw, width)
-        return (lifted + np.array([0.0, 0.0, 0.15 * s]), yaw, FINGER_OPEN)
+        return (lifted + np.array([0.0, 0.0, self.RETREAT_RISE * s]), yaw, self.FINGER_OPEN)
 
     def _advance_phase(self):
         name, duration = self.PHASES[self.phase_idx]
@@ -173,7 +201,7 @@ class ControllerMixin:
                 return
             if not at_force_target:
                 print(
-                    f'WARNING: grip target {GRIP_TARGET_NORMAL_FORCE:.1f} N per finger not reached; '
+                    f'WARNING: grip target {self.GRIP_TARGET_FORCE:.1f} N per finger not reached; '
                     f'closure limit reached at {self.grip_width:.4f} m '
                     f'(measured per-finger forces: {self.grip_force_by_finger})'
                 )
@@ -195,7 +223,7 @@ class ControllerMixin:
         self.phase_time = 0.0
         new = self.PHASES[self.phase_idx][0]
         if new == 'close':
-            self.grip_width = FINGER_OPEN
+            self.grip_width = self.FINGER_OPEN
             self.grip_force = 0.0
             self.grip_force_by_finger = {}
             self.grip_force_reached = False
