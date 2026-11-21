@@ -6,7 +6,7 @@
 import numpy as np
 import warp as wp
 
-from .constants import FRAME_DT, SIM_DT
+from .constants import CABLE_RADIUS, FRAME_DT, SIM_DT
 
 class ControllerMixin:
     PHASES = [('settle', None), ('pregrasp', 1.5), ('descend', 1.0), ('close', 0.8), ('hold', 0.3), ('pull', 2.5), ('lift', 0.6), ('transfer', 1.5), ('lower', 0.5), ('release', 0.5), ('retreat', 0.6)]
@@ -24,6 +24,8 @@ class ControllerMixin:
     GRASP_HEIGHT = 0.008
 
     PULL_LENGTH = 0.25
+
+    GRASP_DROP = CABLE_RADIUS  # [m] below the depth-measured top surface (= cable axis), so the fingers close around the body
 
     FINGER_CLOSED = 0.002
     GRIP_CLOSE_RATE = 0.1
@@ -69,6 +71,7 @@ class ControllerMixin:
         self.settled_at = None
         self.settled_at_rest = None
         self.target = None
+        self._grasp_marker_saved = False
         self.attached = None
         self.grip_width = self.FINGER_OPEN
         self.grip_force = 0.0
@@ -111,6 +114,17 @@ class ControllerMixin:
         direction /= np.linalg.norm(direction)
         point[2] = self.GRASP_HEIGHT
         self.target = {'cable': cable, 'point': point, 'dir': direction, 'seg_index': n - 4}
+        if self.grasp_source == 'camera' or self.show_grasp_point:
+            u, v = self.world_to_pixel(starts[n - 4])
+            cap = self.capture()
+            self.target['pixel'] = (u, v)
+            self.target['point_truth'] = point.copy()
+            if self.grasp_source == 'camera':
+                self.target['point'] = self.grasp_point_from_pixel(u, v, drop=self.GRASP_DROP, z_min=self.GRASP_HEIGHT, depth=cap.depth)
+            if self.show_grasp_point and not self._grasp_marker_saved:
+                path = self.save_grasp_marker(cap, u, v, self.target['point'], getattr(self.args, 'rgbd_dir', None) or 'rgbd_out')
+                print(f'grasp pixel ({u}, {v}) -> world {np.round(self.target["point"], 4)}; marker image: {path}')
+                self._grasp_marker_saved = True
         target_yaw = self.yaw_for_cable_direction(direction)
         yaw_period = self.robot.yaw_period
         if yaw_period is not None:

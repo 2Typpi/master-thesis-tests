@@ -10,12 +10,13 @@ from pathlib import Path
 
 import numpy as np
 import warp as wp
-from PIL import Image
+from PIL import Image, ImageDraw
 
 import newton
 from newton.sensors import SensorTiledCamera
 
 from . import projection
+from .perception import PixelToWorld
 from .constants import (
     CAMERA_POSITION, CAMERA_QUAT_XYZW, CAMERA_FOV_Y_DEG, CAMERA_SIZE,
     CAMERA_LIGHT_DIRECTION, CAMERA_TABLE_COLOR,
@@ -98,7 +99,25 @@ class RGBDCameraMixin:
         position = tuple(float(v) for v in position)
         quat_xyzw = tuple(float(v) for v in quat_xyzw)
         self.rgbd_T_world_cam = projection.pose_matrix(position, quat_xyzw)
+        self.rgbd_pixel_map = None  # cached world rays belong to the old pose
         self.rgbd_camera_transforms = wp.array([[wp.transformf(wp.vec3f(*position), wp.quatf(*quat_xyzw))]], dtype=wp.transformf, device=self.device)
+
+    def pixel_map(self) -> PixelToWorld:
+        """Per-pixel world rays of the (static) camera; built once, rebuilt only after ``set_camera_pose``."""
+        if getattr(self, 'rgbd_pixel_map', None) is None:
+            self.rgbd_pixel_map = PixelToWorld(self.rgbd_K, self.rgbd_T_world_cam, self.rgbd_width, self.rgbd_height)
+        return self.rgbd_pixel_map
+
+    def world_to_pixel(self, point_world) -> tuple[int, int]:
+        """Nearest pixel ``(u, v)`` of a world point (stand-in for a detector while testing)."""
+        px, py, _, _ = projection.project(point_world, self.rgbd_T_world_cam, self.rgbd_K)
+        return int(round(float(px[0]))), int(round(float(py[0])))
+
+    def grasp_point_from_pixel(self, u: int, v: int, drop: float, z_min: float, depth: np.ndarray | None = None) -> np.ndarray:
+        """3D grasp point for a detected pixel, read from the live depth channel (renders a frame unless ``depth`` is given)."""
+        if depth is None:
+            depth = self.capture().depth
+        return self.pixel_map().grasp_point(depth, u, v, drop=drop, z_min=z_min)
 
     def capture(self) -> Capture:
         """Render the current cable state; returns images plus everything needed to project to / from 3D."""
@@ -124,6 +143,27 @@ class RGBDCameraMixin:
             K=self.rgbd_K.copy(), T_world_cam=self.rgbd_T_world_cam.copy(), fov_y_deg=self.rgbd_fov_y_deg,
             sim_time=float(self.sim_time), at_rest=at_rest, max_cable_speed=(lin, ang),
         )
+
+    def save_grasp_marker(self, cap: Capture, u: int, v: int, point_world, out_dir, prefix: str = 'settled_') -> Path:
+        """Write ``<prefix>rgb_grasp.png``: the camera RGB with a ring + crosshair at pixel ``(u, v)`` and a caption."""
+        out = Path(out_dir)
+        out.mkdir(parents=True, exist_ok=True)
+        img = Image.fromarray(cap.rgb).convert('RGB')
+        draw = ImageDraw.Draw(img)
+        r, gap, tick = 16, 5, 30
+        # dark outline under a bright colour, so the marker reads on both black background and white cables
+        for width, colour in ((5, (0, 0, 0)), (2, (255, 0, 255))):
+            draw.ellipse([u - r, v - r, u + r, v + r], outline=colour, width=width)
+            for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+                draw.line([u + dx * gap, v + dy * gap, u + dx * tick, v + dy * tick], fill=colour, width=width)
+        x, y, z = (float(c) for c in point_world)
+        text = f'pixel ({u}, {v})  ->  world ({x:.3f}, {y:.3f}, {z:.3f}) m'
+        tx, ty = min(u + r + 6, max(img.width - 420, 0)), min(v + r + 6, img.height - 16)
+        draw.rectangle([tx - 2, ty - 2, tx + 8 * len(text) * 0.75 + 2, ty + 12], fill=(0, 0, 0))
+        draw.text((tx, ty), text, fill=(255, 0, 255))
+        path = out / f'{prefix}rgb_grasp.png'
+        img.save(path)
+        return path
 
     def cable_table(self) -> list[dict]:
         """JSON-serialisable per-cable record (name, attributes, segment count)."""

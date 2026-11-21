@@ -21,6 +21,8 @@ if __name__ == "__main__":
     parser.add_argument("--robot", choices=sorted(ROBOTS), default=DEFAULT_ROBOT, help="which arm to simulate")
     parser.add_argument("--pull", choices=["knot", "free"], default="knot")
     parser.add_argument("--grasp", choices=["friction", "sticky"], default="friction")
+    parser.add_argument("--grasp-source", choices=["truth", "camera"], default="truth", help="grasp point from the simulator state, or from a pixel + the camera depth channel")
+    parser.add_argument("--show-grasp-point", action="store_true", help="save a copy of the camera RGB with the grasp pixel marked (<rgbd-dir>/settled_rgb_grasp.png)")
     parser.add_argument("--num-cables", type=int, default=6, help="total, including A, B, C and the free cable")
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--settle-time", type=float, default=2.0, help="cap [s] on waiting for the pile to rest")

@@ -24,6 +24,9 @@ class Panda(SceneMixin, ControllerMixin, RGBDCameraMixin):
         self.robot = ROBOTS[robot_name]
         self.pull = getattr(args, 'pull', 'knot')
         self.grasp = getattr(args, 'grasp', 'friction')
+        self.grasp_source = getattr(args, 'grasp_source', 'truth')  # 'truth' = simulator state, 'camera' = pixel + depth
+        self.show_grasp_point = getattr(args, 'show_grasp_point', False)  # draw the grasp pixel on the saved camera image
+        assert self.grasp_source in ('truth', 'camera'), self.grasp_source
         self.num_cables = max(4, getattr(args, 'num_cables', 6))
         self.seed = getattr(args, 'seed', 0)
         self.settle_time = getattr(args, 'settle_time', 2.0)
