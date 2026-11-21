@@ -40,6 +40,8 @@ class ScenePreset:
     grasp_height: float = 0.008
     pull_length: float = 0.25
     lift_height: float = 0.30
+    dropoff_offset: tuple | None = None  # (forward, left) from the robot base, in world-aligned xy
+    dropoff_height: float | None = None
     retreat_rise: float = 0.15
     viewer_camera: tuple = (0.75, -0.85, 0.55)  # interactive viewer eye position
 
@@ -156,7 +158,7 @@ SO101 = RobotSpec(
     yaw_for_cable_direction=_so101_yaw_for_cable_direction,
     scene=ScenePreset(
         base_pos=(-0.17, 0.0, 0.0),
-        cable_length=0.3,
+        cable_length=0.15,
         chain_R=0.02,
         chain_tail=0.12,
         chain_body_ab=0.07,
@@ -168,7 +170,9 @@ SO101 = RobotSpec(
         pregrasp_height=0.07,
         grasp_height=0.010,
         pull_length=0.10,
-        lift_height=0.2,
+        lift_height=0.15,
+        dropoff_offset=(0.10, 0.24),
+        dropoff_height=0.05,
         retreat_rise=0.03,
         viewer_camera=(0.4, -0.45, 0.3),
     ),

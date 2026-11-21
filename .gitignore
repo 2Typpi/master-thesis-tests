@@ -2,3 +2,4 @@
 .agents/
 __pycache__/
 rgbd_out/
+plans/

@@ -9,7 +9,7 @@ import warp as wp
 from .constants import FRAME_DT, SIM_DT
 
 class ControllerMixin:
-    PHASES = [('settle', None), ('pregrasp', 1.5), ('descend', 1.0), ('close', 0.8), ('hold', 0.3), ('pull', 2.5), ('lift', 1.0), ('release', 0.5), ('retreat', 0.6)]
+    PHASES = [('settle', None), ('pregrasp', 1.5), ('descend', 1.0), ('close', 0.8), ('hold', 0.3), ('pull', 2.5), ('lift', 0.6), ('transfer', 1.5), ('lower', 0.5), ('release', 0.5), ('retreat', 0.6)]
 
     MIN_SETTLE = 0.5
 
@@ -31,6 +31,9 @@ class ControllerMixin:
 
     LIFT_HEIGHT = 0.30
 
+    DROPOFF_OFFSET = None
+    DROPOFF_HEIGHT = 0.018
+
     RETREAT_RISE = 0.15
 
     def _apply_robot_preset(self):
@@ -45,7 +48,17 @@ class ControllerMixin:
         self.GRASP_HEIGHT = sc.grasp_height
         self.PULL_LENGTH = sc.pull_length
         self.LIFT_HEIGHT = sc.lift_height
+        self.DROPOFF_OFFSET = sc.dropoff_offset
+        self.DROPOFF_HEIGHT = sc.dropoff_height if sc.dropoff_height is not None else sc.grasp_height
         self.RETREAT_RISE = sc.retreat_rise
+        if self.DROPOFF_OFFSET is None:
+            self.PHASES = type(self).PHASES
+        else:
+            self.PHASES = [
+                ('settle', None), ('pregrasp', 1.5), ('descend', 1.0), ('close', 0.8),
+                ('hold', 0.3), ('pull', 2.5), ('lift', 0.6), ('transfer', 1.5),
+                ('lower', 0.5), ('release', 0.5), ('retreat', 1.5),
+            ]
 
     def _init_controller(self):
         self._apply_robot_preset()
@@ -146,6 +159,16 @@ class ControllerMixin:
                 self.grip_width - self.GRIP_RECLOSE_RATE * SIM_DT,
             )
 
+    def _dropoff_position(self, lifted: np.ndarray) -> np.ndarray:
+        """Return the TCP pose at the configured drop zone and release height."""
+        dropoff = lifted.copy()
+        if self.DROPOFF_OFFSET is not None:
+            base = np.asarray(self.robot.scene.base_pos[:2])
+            forward, left = self.DROPOFF_OFFSET
+            dropoff[:2] = base + np.array([forward, left])
+        dropoff[2] = self.DROPOFF_HEIGHT
+        return dropoff
+
     def controller_command(self):
         """Scripted state machine -> (tcp [3], hand yaw, finger width)."""
         name, duration = self.PHASES[self.phase_idx]
@@ -174,10 +197,32 @@ class ControllerMixin:
             return (T['point'] * (1 - u) + pulled * u, yaw, self.grip_width)
         if name == 'lift':
             return (pulled * (1 - s) + lifted * s, yaw, self.grip_width)
+        dropoff = self._dropoff_position(lifted)
+        dropoff_high = dropoff.copy()
+        dropoff_high[2] = lifted[2]
+        if name == 'transfer':
+            return (lifted * (1 - s) + dropoff_high * s, yaw, self.grip_width)
+        if name == 'lower':
+            return (dropoff_high * (1 - s) + dropoff * s, yaw, self.grip_width)
         if name == 'release':
             width = self.grip_width + (self.FINGER_OPEN - self.grip_width) * s
-            return (lifted, yaw, width)
-        return (lifted + np.array([0.0, 0.0, self.RETREAT_RISE * s]), yaw, self.FINGER_OPEN)
+            return (dropoff, yaw, width)
+        if name == 'retreat':
+            if self.DROPOFF_OFFSET is None:
+                return (lifted + np.array([0.0, 0.0, self.RETREAT_RISE * s]), yaw, self.FINGER_OPEN)
+            if s < 0.25:
+                rise = s / 0.25
+                rise = rise * rise * (3.0 - 2.0 * rise)
+                tcp = dropoff + np.array([0.0, 0.0, self.RETREAT_RISE * rise])
+                retreat_yaw = yaw
+            else:
+                home = (s - 0.25) / 0.75
+                home = home * home * (3.0 - 2.0 * home)
+                raised_dropoff = dropoff + np.array([0.0, 0.0, self.RETREAT_RISE])
+                tcp = raised_dropoff * (1.0 - home) + self.home_tcp * home
+                retreat_yaw = yaw * (1.0 - home) + self.home_yaw * home
+            return (tcp, retreat_yaw, self.FINGER_OPEN)
+        return (lifted, yaw, self.FINGER_OPEN)
 
     def _advance_phase(self):
         name, duration = self.PHASES[self.phase_idx]
